@@ -36,6 +36,16 @@ Timeouts and cancellation
 .. autofunction:: anyio.fail_after
 .. autofunction:: anyio.fail_at
 .. autofunction:: anyio.current_effective_deadline
+.. autofunction:: anyio.push_timeout_policy
+.. autofunction:: anyio.current_timeout_policy
+.. autofunction:: anyio.get_effective_timeout_policy
+
+.. autoclass:: anyio.TimeoutPolicyFrame
+.. autoclass:: anyio.EffectiveTimeoutPolicy
+.. autoclass:: anyio.DeadlineMerge
+.. autoclass:: anyio.TimeoutSurface
+.. autoclass:: anyio.OffloadCoupling
+    :members:
 
 .. autoclass:: anyio.CancelScope
 

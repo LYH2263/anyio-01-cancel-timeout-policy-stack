@@ -78,6 +78,11 @@ from .._core._exceptions import (
     RunFinishedError,
     WouldBlock,
 )
+from .._core._policy import (
+    detached_timeout_policy,
+    enter_timeout_policy,
+    isolated_timeout_policy_stack,
+)
 from .._core._sockets import convert_ipv6_sockaddr
 from .._core._streams import create_memory_object_stream
 from .._core._synchronization import (
@@ -812,28 +817,30 @@ class TaskGroup(abc.TaskGroup):
             loop = get_running_loop()
             try:
                 if self._tasks:
-                    with CancelScope() as wait_scope:
-                        while self._tasks:
-                            self._on_completed_fut = loop.create_future()
+                    with detached_timeout_policy():
+                        with CancelScope() as wait_scope:
+                            while self._tasks:
+                                self._on_completed_fut = loop.create_future()
 
-                            try:
-                                await self._on_completed_fut
-                            except CancelledError as exc:
-                                # Shield the scope against further cancellation attempts,
-                                # as they're not productive (#695)
-                                wait_scope.shield = True
-                                self.cancel_scope.cancel()
+                                try:
+                                    await self._on_completed_fut
+                                except CancelledError as exc:
+                                    # Shield the scope against further cancellation
+                                    # attempts, as they're not productive (#695)
+                                    wait_scope.shield = True
+                                    self.cancel_scope.cancel()
 
-                                # Set exc_val from the cancellation exception if it was
-                                # previously unset. However, we should not replace a native
-                                # cancellation exception with one raise by a cancel scope.
-                                if exc_val is None or (
-                                    isinstance(exc_val, CancelledError)
-                                    and not is_anyio_cancellation(exc)
-                                ):
-                                    exc_val = exc
+                                    # Set exc_val from the cancellation exception if it
+                                    # was previously unset. However, we should not
+                                    # replace a native cancellation exception with one
+                                    # raise by a cancel scope.
+                                    if exc_val is None or (
+                                        isinstance(exc_val, CancelledError)
+                                        and not is_anyio_cancellation(exc)
+                                    ):
+                                        exc_val = exc
 
-                            self._on_completed_fut = None
+                                self._on_completed_fut = None
                 else:
                     # If there are no child tasks to wait on, run at least one checkpoint
                     # anyway
@@ -1022,8 +1029,9 @@ class TaskGroup(abc.TaskGroup):
             if handle.status is TaskHandle.Status.PENDING:
                 # Cancel the task and wait for it to exit before returning
                 handle.cancel()
-                with CancelScope(shield=True):
-                    await handle.wait()
+                with detached_timeout_policy():
+                    with CancelScope(shield=True):
+                        await handle.wait()
 
             raise
 
@@ -2394,7 +2402,11 @@ class TestRunner(abc.TestRunner):
         with receive_stream, self._send_stream:
             async for coro, future in receive_stream:
                 try:
-                    retval = await coro
+                    # The test runner never subscribes to the business task-tree
+                    # timeout policy stack; each invocation starts with an empty
+                    # stack regardless of what previous invocations leaked.
+                    with isolated_timeout_policy_stack():
+                        retval = await coro
                 except CancelledError as exc:
                     if not future.cancelled():
                         future.cancel(*exc.args)
@@ -2521,6 +2533,8 @@ class AsyncIOBackend(AsyncBackend):
         kwargs: dict[str, Any],
         options: dict[str, Any],
     ) -> T_Retval:
+        policy = options.pop("timeout_policy", None)
+
         @wraps(func)
         async def wrapper() -> T_Retval:
             task = cast(asyncio.Task, current_task())
@@ -2528,7 +2542,11 @@ class AsyncIOBackend(AsyncBackend):
             _task_states[task] = TaskState(None, None)
 
             try:
-                return await func(*args)
+                if policy is not None:
+                    with enter_timeout_policy(policy):
+                        return await func(*args)
+                else:
+                    return await func(*args)
             finally:
                 del _task_states[task]
 

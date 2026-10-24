@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING, TypeVar
 from warnings import warn
 
 from ._core._eventloop import get_async_backend
+from ._core._policy import (
+    OffloadCoupling,
+    get_effective_timeout_policy,
+)
 
 if TYPE_CHECKING:
     from ._core._synchronization import CapacityLimiter
@@ -61,6 +65,20 @@ async def run_sync(
             DeprecationWarning,
             stacklevel=2,
         )
+
+    policy = get_effective_timeout_policy()
+    if policy is not None:
+        if (
+            policy.offload_coupling & OffloadCoupling.thread_follow_host
+            and policy.abandon_on_cancel is not None
+        ):
+            # The host stack top decides whether the worker thread is abandoned
+            abandon_on_cancel = policy.abandon_on_cancel
+
+        if limiter is None and (
+            policy.offload_coupling & OffloadCoupling.limiter_frame
+        ):
+            limiter = policy.limiter
 
     return await get_async_backend().run_sync_in_worker_thread(
         func, args, abandon_on_cancel=abandon_on_cancel, limiter=limiter

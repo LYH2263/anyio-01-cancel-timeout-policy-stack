@@ -105,6 +105,87 @@ Here's how you typically use timeouts::
     that may currently result in :exc:`TimeoutError` being erroneously raised if exiting
     the scope is delayed long enough for the deadline to be exceeded.
 
+.. _timeout policy stack:
+
+Timeout policy stack
+--------------------
+
+Sometimes a framework or an application needs to establish a timeout and cancellation
+policy for a whole subtree of tasks – for example to tighten the effective deadline for
+everything running under a request handler, to decide whether an expired timeout should
+fail or just move on, or to control how work unloaded to worker threads couples with the
+host task. Wrapping every call site in another cancel scope is fragile: the wrapping has
+to be repeated everywhere, exception paths easily forget to restore the previous state,
+and concurrent tasks can clobber each other's settings.
+
+AnyIO provides a **timeout policy stack** bound to the current task tree for this purpose.
+A frame is pushed with :func:`~push_timeout_policy` and popped automatically when the
+context block (including via an exception) is exited::
+
+    from anyio import OffloadCoupling, push_timeout_policy, run, to_thread
+
+    async def main():
+        with push_timeout_policy(
+            delay=5,
+            offload_coupling=OffloadCoupling.thread_follow_host,
+            abandon_on_cancel=True,
+        ):
+            # Every call in this subtree (including in tasks spawned here) runs
+            # against a 5 second deadline, and to_thread.run_sync() calls abandon
+            # their worker threads on cancellation
+            ...
+
+    run(main)
+
+Each frame expresses three things:
+
+* **How its deadline is merged** with the deadlines in effect outside the frame
+  (:class:`~DeadlineMerge`):
+
+  - ``strict_min`` (the default) tightens the effective deadline against both the outer
+    frames and :func:`~current_effective_deadline`,
+  - ``active_frame`` makes :func:`~get_effective_timeout_policy` report the stack top
+    only,
+  - ``inherit_only`` only allows tightening; pushing a looser deadline raises
+    :exc:`ValueError`.
+* **How an expired frame deadline is surfaced** (:class:`~TimeoutSurface`):
+
+  - ``fail`` (the default) behaves like :func:`~fail_after` and raises
+    :exc:`TimeoutError` at the frame boundary,
+  - ``move_on`` behaves like :func:`~move_on_after` and simply cancels the body without
+    raising,
+  - ``scope_only`` only propagates cancellation (like a bare
+    :class:`~CancelScope`); the outcome is observable through
+    :attr:`~TimeoutPolicyFrame.cancelled_caught`.
+
+  The four timeout helpers keep their own semantics and timing points (the
+  :func:`~move_on_after` clock starts when the scope object is created, the
+  :func:`~fail_after` clock starts when the block is entered); the frame decides what
+  happens when **its** deadline cuts the nested work short.
+* **How unloaded work couples with the host task** (:class:`~OffloadCoupling`):
+
+  - ``thread_follow_host`` makes :func:`~to_thread.run_sync` use the frame's
+    ``abandon_on_cancel`` value,
+  - ``limiter_frame`` makes it borrow the worker thread from the frame's
+    :class:`~CapacityLimiter`,
+  - ``portal_fork`` means tasks spawned from a thread via a
+    :class:`~from_thread.BlockingPortal` never inherit the frames pushed by the host
+    task.
+
+The current stack top and its deadline merged with the cancel scope tree can be read
+with :func:`~current_timeout_policy` and :func:`~get_effective_timeout_policy`. Both
+return ``None`` when no frame has been pushed – in that case, and when a frame carries
+no deadline or coupling flags, behavior is exactly the same as without the stack.
+Popping a frame restores the previous *user* frame; there is no process-wide global
+fallback. Concurrent host tasks that each push frames never see each other's stacks,
+while tasks spawned within a frame inherit it.
+
+A policy can also be installed for an entire :func:`~run` invocation with the
+``timeout_policy`` keyword argument. The pytest plugin's ``TestRunner`` entry point, in
+contrast, never subscribes to the business task-tree stack, and library-internal cancel
+scopes (such as the temporary shield used while a task group waits for its children, or
+the happy-eyeballs pacing inside :func:`~connect_tcp`) do not consult it either.
+
 Shielding
 ---------
 

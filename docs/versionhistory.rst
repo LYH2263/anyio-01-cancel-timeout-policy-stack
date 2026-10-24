@@ -3,6 +3,20 @@ Version history
 
 This library adheres to `Semantic Versioning 2.0 <http://semver.org/>`_.
 
+**UNRELEASED**
+
+- Added a task-tree level timeout policy stack (``push_timeout_policy()``,
+  ``TimeoutPolicyFrame``, ``DeadlineMerge``, ``TimeoutSurface`` and
+  ``OffloadCoupling``) that allows nesting, auto-restoring frames to tighten effective
+  deadlines, to choose whether an expired timeout fails or moves on, and to couple
+  ``to_thread.run_sync()`` offloading (``abandon_on_cancel`` and capacity limiter
+  selection) with the host task. Frames are isolated per task tree (concurrent host
+  tasks cannot clobber each other), are inherited by spawned child tasks, are not
+  inherited by tasks spawned through ``BlockingPortal``, and can be installed for a
+  whole ``anyio.run()`` invocation via the new ``timeout_policy`` keyword argument.
+  Deployments that never push a frame keep the existing timeout and cancellation
+  behavior.
+
 **4.15.1**
 
 - Implemented a compatibility fix for supporting direct access of ``anyio.*`` submodules

@@ -51,6 +51,16 @@ if TYPE_CHECKING or not install_lazy_importer():
     from ._core._fileio import open_file as open_file
     from ._core._fileio import wrap_file as wrap_file
     from ._core._futures import Future as Future
+    from ._core._policy import DeadlineMerge as DeadlineMerge
+    from ._core._policy import EffectiveTimeoutPolicy as EffectiveTimeoutPolicy
+    from ._core._policy import OffloadCoupling as OffloadCoupling
+    from ._core._policy import TimeoutPolicyFrame as TimeoutPolicyFrame
+    from ._core._policy import TimeoutSurface as TimeoutSurface
+    from ._core._policy import current_timeout_policy as current_timeout_policy
+    from ._core._policy import (
+        get_effective_timeout_policy as get_effective_timeout_policy,
+    )
+    from ._core._policy import push_timeout_policy as push_timeout_policy
     from ._core._resources import aclose_forcefully as aclose_forcefully
     from ._core._signals import open_signal_receiver as open_signal_receiver
     from ._core._sockets import TCPConnectable as TCPConnectable

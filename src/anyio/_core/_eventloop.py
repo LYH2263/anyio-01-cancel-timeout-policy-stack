@@ -24,6 +24,7 @@ except ModuleNotFoundError:
 
 if TYPE_CHECKING:
     from ..abc import AsyncBackend
+    from ._policy import TimeoutPolicyFrame
 
 # This must be updated when new backends are introduced
 BACKENDS = "asyncio", "trio"
@@ -40,6 +41,7 @@ def run(
     *args: Unpack[PosArgsT],
     backend: str = "asyncio",
     backend_options: dict[str, Any] | None = None,
+    timeout_policy: TimeoutPolicyFrame | None = None,
 ) -> T_Retval:
     """
     Run the given coroutine function in an asynchronous event loop.
@@ -52,9 +54,11 @@ def run(
         either ``asyncio`` or ``trio``
     :param backend_options: keyword arguments to call the backend ``run()``
         implementation with (documented :ref:`here <backend options>`)
+    :param timeout_policy: an optional timeout policy frame to push for the whole
+        run (the run entry point subscribes to the task-tree policy stack)
     :return: the return value of the coroutine function
-    :raises RuntimeError: if an asynchronous event loop is already running in this
-        thread
+    :raises RuntimeError: if an asynchronous event loop is already running in
+        this thread
     :raises LookupError: if the named backend is not found
 
     """
@@ -79,7 +83,10 @@ def run(
         token = set_current_async_library(backend)
 
     try:
-        backend_options = backend_options or {}
+        backend_options = dict(backend_options or {})
+        if timeout_policy is not None:
+            backend_options["timeout_policy"] = timeout_policy
+
         return async_backend.run(func, args, {}, backend_options)
     finally:
         reset_current_async_library(token)

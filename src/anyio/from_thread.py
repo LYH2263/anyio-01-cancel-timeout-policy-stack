@@ -37,6 +37,7 @@ from ._core._eventloop import (
 )
 from ._core._eventloop import run as run_eventloop
 from ._core._exceptions import NoEventLoopError
+from ._core._policy import fork_timeout_policy_stack
 from ._core._synchronization import Event
 from ._core._tasks import CancelScope, create_task_group
 from .abc._tasks import TaskStatus
@@ -258,13 +259,16 @@ class BlockingPortal:
                     )
 
         try:
-            retval_or_awaitable = func(*args, **kwargs)
-            if isawaitable(retval_or_awaitable):
-                with CancelScope() as scope:
-                    future.add_done_callback(callback)
-                    retval = await retval_or_awaitable
-            else:
-                retval = retval_or_awaitable
+            # Tasks spawned from a thread do not inherit frames the host task
+            # may have pushed onto its timeout policy stack (portal_fork)
+            with fork_timeout_policy_stack():
+                retval_or_awaitable = func(*args, **kwargs)
+                if isawaitable(retval_or_awaitable):
+                    with CancelScope() as scope:
+                        future.add_done_callback(callback)
+                        retval = await retval_or_awaitable
+                else:
+                    retval = retval_or_awaitable
         except get_cancelled_exc_class():
             future.cancel()
             future.set_running_or_notify_cancel()

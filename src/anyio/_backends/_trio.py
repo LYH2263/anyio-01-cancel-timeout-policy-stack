@@ -68,6 +68,10 @@ from .._core._exceptions import (
     ClosedResourceError,
     EndOfStream,
 )
+from .._core._policy import (
+    enter_timeout_policy,
+    isolated_timeout_policy_stack,
+)
 from .._core._sockets import convert_ipv6_sockaddr
 from .._core._streams import create_memory_object_stream
 from .._core._synchronization import (
@@ -997,7 +1001,11 @@ class TestRunner(abc.TestRunner):
         with receive_stream:
             async for awaitable, outcome_holder in receive_stream:
                 try:
-                    retval = await awaitable
+                    # The test runner never subscribes to the business task-tree
+                    # timeout policy stack; each invocation starts with an empty
+                    # stack regardless of what previous invocations leaked.
+                    with isolated_timeout_policy_stack():
+                        retval = await awaitable
                 except BaseException as exc:
                     outcome_holder.append(Error(exc))
                 else:
@@ -1089,6 +1097,19 @@ class TrioBackend(AsyncBackend):
         options: dict[str, Any],
     ) -> T_Retval:
         assert not kwargs, "unreachable, and not supported by Trio"
+        policy = options.pop("timeout_policy", None)
+        if policy is not None:
+            original_func = func
+
+            @wraps(original_func)
+            async def policy_wrapper(
+                *wrapper_args: Unpack[PosArgsT],
+            ) -> T_Retval:
+                with enter_timeout_policy(policy):
+                    return await original_func(*wrapper_args)
+
+            func = policy_wrapper
+
         return trio.run(ensure_returns_coro(func), *args, **options)
 
     @classmethod

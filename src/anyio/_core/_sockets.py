@@ -29,6 +29,7 @@ from ..abc import (
 from ..streams.stapled import MultiListener
 from ..streams.tls import TLSConnectable, TLSStream
 from ._eventloop import get_async_backend
+from ._policy import detached_timeout_policy
 from ._resources import aclose_forcefully
 from ._synchronization import Event
 from ._tasks import create_task_group, move_on_after
@@ -253,8 +254,11 @@ async def connect_tcp(
             for _af, addr in target_addrs:
                 event = Event()
                 tg.start_soon(try_connect, addr, event)
-                with move_on_after(happy_eyeballs_delay):
-                    await event.wait()
+                # Library-internal happy eyeballs pacing; does not subscribe to
+                # the application timeout policy stack
+                with detached_timeout_policy():
+                    with move_on_after(happy_eyeballs_delay):
+                        await event.wait()
 
         if connected_stream is None:
             cause = (
